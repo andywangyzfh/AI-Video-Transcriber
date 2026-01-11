@@ -1,0 +1,96 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "ai-video-transcriber",
+  "title": "AI Video Transcriber",
+  "description": "Transcribe and summarize videos from YouTube, Bilibili, and 30+ platforms",
+  "icon": "command-icon.png",
+  "author": "your_name",
+  "categories": [
+    "Productivity",
+    "Media"
+  ],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "transcribe-video",
+      "title": "Transcribe Video",
+      "description": "Start transcribing a video from URL",
+      "mode": "view"
+    },
+    {
+      "name": "view-tasks",
+      "title": "View Transcription Tasks",
+      "description": "View and manage ongoing transcription tasks",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "apiUrl",
+      "type": "textfield",
+      "required": false,
+      "title": "API URL",
+      "description": "AI Video Transcriber API URL",
+      "default": "http://localhost:8000",
+      "placeholder": "http://localhost:8000"
+    },
+    {
+      "name": "summaryLanguage",
+      "type": "dropdown",
+      "required": false,
+      "title": "Default Summary Language",
+      "description": "Default language for video summaries",
+      "default": "en",
+      "data": [
+        {
+          "title": "English",
+          "value": "en"
+        },
+        {
+          "title": "Chinese (Simplified)",
+          "value": "zh"
+        },
+        {
+          "title": "Japanese",
+          "value": "ja"
+        },
+        {
+          "title": "Korean",
+          "value": "ko"
+        },
+        {
+          "title": "Spanish",
+          "value": "es"
+        },
+        {
+          "title": "French",
+          "value": "fr"
+        },
+        {
+          "title": "German",
+          "value": "de"
+        }
+      ]
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.83.2",
+    "@raycast/utils": "^1.17.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/node": "20.8.10",
+    "@types/react": "18.3.3",
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.5",
+    "typescript": "^5.4.5"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "prepublishOnly": "echo \"\\n\\nIt seems like you are trying to publish the Raycast extension to npm.\\n\\nIf you did intend to publish it to npm, remove the \\`prepublishOnly\\` script and rerun \\`npm publish\\` again.\\nIf you wanted to publish it to the Raycast Store instead, use \\`npm run publish\\` instead.\\n\\n\" && exit 1",
+    "publish": "npx @raycast/api@latest publish"
+  }
+}

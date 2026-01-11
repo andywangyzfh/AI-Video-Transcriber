@@ -97,7 +97,17 @@ class VideoTranscriber {
         this.videoUrlInput = document.getElementById('videoUrl');
         this.summaryLanguageSelect = document.getElementById('summaryLanguage');
         this.submitBtn = document.getElementById('submitBtn');
-        
+
+        // 设置面板元素
+        this.settingsBtn = document.getElementById('settingsBtn');
+        this.settingsPanel = document.getElementById('settingsPanel');
+        this.closeSettingsBtn = document.getElementById('closeSettings');
+        this.apiKeyInput = document.getElementById('apiKey');
+        this.apiKeyStatus = document.getElementById('apiKeyStatus');
+        this.whisperModelSelect = document.getElementById('whisperModel');
+        this.enableSummaryCheckbox = document.getElementById('enableSummary');
+        this.saveSettingsBtn = document.getElementById('saveSettings');
+
         // 进度元素
         this.progressSection = document.getElementById('progressSection');
         this.progressStatus = document.getElementById('progressStatus');
@@ -139,7 +149,20 @@ class VideoTranscriber {
             e.preventDefault();
             this.startTranscription();
         });
-        
+
+        // 设置面板
+        this.settingsBtn.addEventListener('click', () => {
+            this.settingsPanel.classList.toggle('active');
+        });
+
+        this.closeSettingsBtn.addEventListener('click', () => {
+            this.settingsPanel.classList.remove('active');
+        });
+
+        this.saveSettingsBtn.addEventListener('click', () => {
+            this.saveSettings();
+        });
+
         // 标签页切换
         this.tabButtons.forEach(button => {
             button.addEventListener('click', () => {
@@ -175,6 +198,9 @@ class VideoTranscriber {
     initializeLanguage() {
         // 设置默认语言为英文
         this.switchLanguage('en');
+
+        // 加载设置
+        this.loadSettings();
     }
     
     toggleLanguage() {
@@ -242,7 +268,9 @@ class VideoTranscriber {
             const formData = new FormData();
             formData.append('url', videoUrl);
             formData.append('summary_language', summaryLanguage);
-            
+            formData.append('whisper_model', this.whisperModelSelect.value);
+            formData.append('enable_summary', this.enableSummaryCheckbox.checked);
+
             const response = await fetch(`${this.apiBase}/process-video`, {
                 method: 'POST',
                 body: formData
@@ -767,6 +795,69 @@ class VideoTranscriber {
     
     hideError() {
         this.errorAlert.style.display = 'none';
+    }
+
+    async loadSettings() {
+        try {
+            const response = await fetch(`${this.apiBase}/settings`);
+            if (response.ok) {
+                const settings = await response.json();
+
+                // 更新API Key状态
+                if (settings.openai_api_key_configured) {
+                    this.apiKeyStatus.textContent = `Configured (${settings.openai_api_key_masked})`;
+                    this.apiKeyStatus.className = 'api-key-status configured';
+                    this.apiKeyInput.placeholder = settings.openai_api_key_masked;
+                } else {
+                    this.apiKeyStatus.textContent = 'Not Configured';
+                    this.apiKeyStatus.className = 'api-key-status not-configured';
+                }
+
+                // 更新Whisper模型选择
+                if (settings.whisper_model_size) {
+                    this.whisperModelSelect.value = settings.whisper_model_size;
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load settings:', error);
+        }
+    }
+
+    async saveSettings() {
+        try {
+            const formData = new FormData();
+
+            const apiKey = this.apiKeyInput.value.trim();
+            if (apiKey) {
+                formData.append('openai_api_key', apiKey);
+            }
+
+            formData.append('whisper_model_size', this.whisperModelSelect.value);
+
+            const response = await fetch(`${this.apiBase}/settings`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                // 显示成功消息
+                alert('Settings saved successfully!');
+
+                // 重新加载设置以更新UI
+                await this.loadSettings();
+
+                // 清空API key输入框
+                this.apiKeyInput.value = '';
+
+                // 关闭设置面板
+                this.settingsPanel.classList.remove('active');
+            } else {
+                throw new Error('Failed to save settings');
+            }
+        } catch (error) {
+            console.error('Failed to save settings:', error);
+            alert('Failed to save settings. Please try again.');
+        }
     }
 }
 

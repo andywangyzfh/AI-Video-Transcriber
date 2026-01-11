@@ -26,6 +26,19 @@ class VideoProcessor:
             'no_warnings': True,
             'noplaylist': True,  # 强制只下载单个视频，不下载播放列表
         }
+
+        # 添加浏览器 Cookie 支持（用于下载会员专属内容）
+        # 支持的浏览器: chrome, firefox, safari, edge, opera, brave
+        browser = os.getenv('YTDLP_BROWSER', 'chrome')
+        if browser and browser != 'none':
+            self.ydl_opts['cookiesfrombrowser'] = (browser,)
+            logger.info(f"已启用浏览器Cookie认证: {browser}")
+
+        # 或者使用cookies文件（如果设置了YTDLP_COOKIES_FILE环境变量）
+        cookies_file = os.getenv('YTDLP_COOKIES_FILE')
+        if cookies_file and os.path.exists(cookies_file):
+            self.ydl_opts['cookiefile'] = cookies_file
+            logger.info(f"已加载cookies文件: {cookies_file}")
     
     async def download_and_convert(self, url: str, output_dir: Path) -> tuple[str, str]:
         """

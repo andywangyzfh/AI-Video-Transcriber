@@ -124,7 +124,9 @@ async def read_root():
 @app.post("/api/process-video")
 async def process_video(
     url: str = Form(...),
-    summary_language: str = Form(default="zh")
+    summary_language: str = Form(default="zh"),
+    whisper_model: str = Form(default="base"),
+    enable_summary: bool = Form(default=True)
 ):
     """
     处理视频链接，返回任务ID
@@ -136,13 +138,13 @@ async def process_video(
             for tid, task in tasks.items():
                 if task.get("url") == url:
                     return {"task_id": tid, "message": "该视频正在处理中，请等待..."}
-            
+
         # 生成唯一任务ID
         task_id = str(uuid.uuid4())
-        
+
         # 标记URL为正在处理
         processing_urls.add(url)
-        
+
         # 初始化任务状态
         tasks[task_id] = {
             "status": "processing",
@@ -151,21 +153,23 @@ async def process_video(
             "script": None,
             "summary": None,
             "error": None,
-            "url": url  # 保存URL用于去重
+            "url": url,  # 保存URL用于去重
+            "whisper_model": whisper_model,
+            "enable_summary": enable_summary
         }
         save_tasks(tasks)
-        
+
         # 创建并跟踪异步任务
-        task = asyncio.create_task(process_video_task(task_id, url, summary_language))
+        task = asyncio.create_task(process_video_task(task_id, url, summary_language, whisper_model, enable_summary))
         active_tasks[task_id] = task
-        
+
         return {"task_id": task_id, "message": "任务已创建，正在处理中..."}
-        
+
     except Exception as e:
         logger.error(f"处理视频时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
 
-async def process_video_task(task_id: str, url: str, summary_language: str):
+async def process_video_task(task_id: str, url: str, summary_language: str, whisper_model: str = "base", enable_summary: bool = True):
     """
     异步处理视频任务
     """
@@ -209,9 +213,13 @@ async def process_video_task(task_id: str, url: str, summary_language: str):
         })
         save_tasks(tasks)
         await broadcast_task_update(task_id, tasks[task_id])
-        
+
+        # 使用指定的模型创建转录器实例
+        task_transcriber = Transcriber(model_size=whisper_model)
+        logger.info(f"使用Whisper模型: {whisper_model}")
+
         # 转录音频
-        raw_script = await transcriber.transcribe(audio_path)
+        raw_script = await task_transcriber.transcribe(audio_path)
 
         # 将Whisper原始转录保存为Markdown文件，供下载/归档
         try:
@@ -232,60 +240,82 @@ async def process_video_task(task_id: str, url: str, summary_language: str):
         except Exception as e:
             logger.error(f"保存原始转录Markdown失败: {e}")
         
-        # 更新状态：优化转录文本
-        tasks[task_id].update({
-            "progress": 55,
-            "message": "正在优化转录文本..."
-        })
-        save_tasks(tasks)
-        await broadcast_task_update(task_id, tasks[task_id])
-        
-        # 优化转录文本：修正错别字，按含义分段
-        script = await summarizer.optimize_transcript(raw_script)
-        
+        # 如果启用摘要，优化转录文本
+        if enable_summary:
+            # 更新状态：优化转录文本
+            tasks[task_id].update({
+                "progress": 55,
+                "message": "正在优化转录文本..."
+            })
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
+
+            # 优化转录文本：修正错别字，按含义分段
+            script = await summarizer.optimize_transcript(raw_script)
+        else:
+            # 不优化，直接使用原始转录
+            script = raw_script
+            tasks[task_id].update({
+                "progress": 55,
+                "message": "跳过文本优化..."
+            })
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
+
         # 为转录文本添加标题，并在结尾添加来源链接
         script_with_title = f"# {video_title}\n\n{script}\n\nsource: {url}\n"
-        
+
         # 检查是否需要翻译
-        detected_language = transcriber.get_detected_language(raw_script)
+        detected_language = task_transcriber.get_detected_language(raw_script)
         logger.info(f"检测到的语言: {detected_language}, 摘要语言: {summary_language}")
         
         translation_content = None
         translation_filename = None
         translation_path = None
-        
-        if detected_language and translator.should_translate(detected_language, summary_language):
-            logger.info(f"需要翻译: {detected_language} -> {summary_language}")
-            # 更新状态：生成翻译
+
+        # 仅在启用摘要时才进行翻译和摘要生成
+        if enable_summary:
+            if detected_language and translator.should_translate(detected_language, summary_language):
+                logger.info(f"需要翻译: {detected_language} -> {summary_language}")
+                # 更新状态：生成翻译
+                tasks[task_id].update({
+                    "progress": 70,
+                    "message": "正在生成翻译..."
+                })
+                save_tasks(tasks)
+                await broadcast_task_update(task_id, tasks[task_id])
+
+                # 翻译转录文本
+                translation_content = await translator.translate_text(script, summary_language, detected_language)
+                translation_with_title = f"# {video_title}\n\n{translation_content}\n\nsource: {url}\n"
+
+                # 保存翻译到文件
+                translation_filename = f"translation_{safe_title}_{short_id}.md"
+                translation_path = TEMP_DIR / translation_filename
+                async with aiofiles.open(translation_path, "w", encoding="utf-8") as f:
+                    await f.write(translation_with_title)
+            else:
+                logger.info(f"不需要翻译: detected_language={detected_language}, summary_language={summary_language}, should_translate={translator.should_translate(detected_language, summary_language) if detected_language else 'N/A'}")
+
+            # 更新状态：生成摘要
             tasks[task_id].update({
-                "progress": 70,
-                "message": "正在生成翻译..."
+                "progress": 80,
+                "message": "正在生成摘要..."
             })
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
-            
-            # 翻译转录文本
-            translation_content = await translator.translate_text(script, summary_language, detected_language)
-            translation_with_title = f"# {video_title}\n\n{translation_content}\n\nsource: {url}\n"
-            
-            # 保存翻译到文件
-            translation_filename = f"translation_{safe_title}_{short_id}.md"
-            translation_path = TEMP_DIR / translation_filename
-            async with aiofiles.open(translation_path, "w", encoding="utf-8") as f:
-                await f.write(translation_with_title)
+
+            # 生成摘要
+            summary = await summarizer.summarize(script, summary_language, video_title)
         else:
-            logger.info(f"不需要翻译: detected_language={detected_language}, summary_language={summary_language}, should_translate={translator.should_translate(detected_language, summary_language) if detected_language else 'N/A'}")
-        
-        # 更新状态：生成摘要
-        tasks[task_id].update({
-            "progress": 80,
-            "message": "正在生成摘要..."
-        })
-        save_tasks(tasks)
-        await broadcast_task_update(task_id, tasks[task_id])
-        
-        # 生成摘要
-        summary = await summarizer.summarize(script, summary_language, video_title)
+            # 不生成摘要
+            summary = "摘要功能已禁用"
+            tasks[task_id].update({
+                "progress": 80,
+                "message": "跳过摘要生成..."
+            })
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
         summary_with_source = summary + f"\n\nsource: {url}\n"
         
         # 保存优化后的转录文本到文件
@@ -506,6 +536,109 @@ async def get_active_tasks():
         "processing_urls": processing_count,
         "task_ids": list(active_tasks.keys())
     }
+
+@app.get("/api/tasks")
+async def list_tasks():
+    """
+    获取所有任务列表
+    """
+    return {
+        "tasks": {
+            task_id: {
+                "task_id": task_id,
+                "status": task_data.get("status"),
+                "progress": task_data.get("progress", 0),
+                "message": task_data.get("message"),
+                "video_title": task_data.get("video_title"),
+                "url": task_data.get("url"),
+                "error": task_data.get("error")
+            }
+            for task_id, task_data in tasks.items()
+        },
+        "total": len(tasks)
+    }
+
+# 设置管理文件
+SETTINGS_FILE = TEMP_DIR / "settings.json"
+
+def load_settings():
+    """加载设置"""
+    try:
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    return {
+        "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
+        "openai_base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        "whisper_model_size": os.getenv("WHISPER_MODEL_SIZE", "base"),
+        "ytdlp_browser": os.getenv("YTDLP_BROWSER", "chrome")
+    }
+
+def save_settings(settings_data):
+    """保存设置"""
+    try:
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings_data, f, ensure_ascii=False, indent=2)
+        # 更新环境变量
+        if settings_data.get("openai_api_key"):
+            os.environ["OPENAI_API_KEY"] = settings_data["openai_api_key"]
+        if settings_data.get("openai_base_url"):
+            os.environ["OPENAI_BASE_URL"] = settings_data["openai_base_url"]
+        if settings_data.get("whisper_model_size"):
+            os.environ["WHISPER_MODEL_SIZE"] = settings_data["whisper_model_size"]
+        if settings_data.get("ytdlp_browser"):
+            os.environ["YTDLP_BROWSER"] = settings_data["ytdlp_browser"]
+    except Exception as e:
+        logger.error(f"保存设置失败: {e}")
+
+@app.get("/api/settings")
+async def get_settings():
+    """
+    获取当前设置
+    """
+    settings = load_settings()
+    # 不返回完整的API key，只返回部分用于显示
+    if settings.get("openai_api_key"):
+        key = settings["openai_api_key"]
+        if len(key) > 8:
+            settings["openai_api_key_masked"] = key[:4] + "..." + key[-4:]
+            settings["openai_api_key_configured"] = True
+        else:
+            settings["openai_api_key_masked"] = ""
+            settings["openai_api_key_configured"] = False
+        del settings["openai_api_key"]  # 不返回完整key
+    else:
+        settings["openai_api_key_masked"] = ""
+        settings["openai_api_key_configured"] = False
+
+    return settings
+
+@app.post("/api/settings")
+async def update_settings(
+    openai_api_key: Optional[str] = Form(None),
+    openai_base_url: Optional[str] = Form(None),
+    whisper_model_size: Optional[str] = Form(None),
+    ytdlp_browser: Optional[str] = Form(None)
+):
+    """
+    更新设置
+    """
+    settings = load_settings()
+
+    if openai_api_key is not None and openai_api_key.strip():
+        settings["openai_api_key"] = openai_api_key.strip()
+    if openai_base_url is not None:
+        settings["openai_base_url"] = openai_base_url.strip() or "https://api.openai.com/v1"
+    if whisper_model_size is not None:
+        settings["whisper_model_size"] = whisper_model_size
+    if ytdlp_browser is not None:
+        settings["ytdlp_browser"] = ytdlp_browser
+
+    save_settings(settings)
+
+    return {"message": "设置已保存", "success": True}
 
 if __name__ == "__main__":
     import uvicorn
