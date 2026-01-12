@@ -283,13 +283,21 @@ class VideoTranscriber {
             
             const data = await response.json();
             this.currentTaskId = data.task_id;
-            
+
             console.log('[DEBUG] ✅ 任务已创建，Task ID:', this.currentTaskId);
-            
+
+            // Check if this is an existing completed task
+            if (data.existing) {
+                console.log('[DEBUG] 📦 这是已完成的任务，直接加载结果');
+                // Directly fetch and display the results
+                await this.loadExistingTask(data.task_id);
+                return;
+            }
+
             // 启动智能进度模拟
             this.initializeSmartProgress();
             this.updateProgress(5, this.t('preparing'), true);
-            
+
             // 使用SSE实时接收状态更新
             this.startSSE();
             
@@ -795,6 +803,41 @@ class VideoTranscriber {
     
     hideError() {
         this.errorAlert.style.display = 'none';
+    }
+
+    async loadExistingTask(taskId) {
+        try {
+            // Fetch the task status to get the results
+            const response = await fetch(`${this.apiBase}/task-status/${taskId}`);
+            if (!response.ok) {
+                throw new Error('Failed to load existing task');
+            }
+
+            const task = await response.json();
+
+            if (task.status === 'completed') {
+                this.setLoading(false);
+                this.hideProgress();
+                this.showResults(
+                    task.script,
+                    task.summary,
+                    task.video_title,
+                    task.translation,
+                    task.detected_language,
+                    task.summary_language
+                );
+            } else {
+                // If not completed, start SSE to monitor progress
+                this.initializeSmartProgress();
+                this.updateProgress(task.progress || 5, task.message || 'Processing...', true);
+                this.startSSE();
+            }
+        } catch (error) {
+            console.error('Failed to load existing task:', error);
+            this.showError('Failed to load existing task results: ' + error.message);
+            this.setLoading(false);
+            this.hideProgress();
+        }
     }
 
     async loadSettings() {

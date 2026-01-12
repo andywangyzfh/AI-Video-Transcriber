@@ -1475,8 +1475,26 @@ Requirements:
     def is_available(self) -> bool:
         """
         检查摘要服务是否可用
-        
+
         Returns:
             True if OpenAI API is configured, False otherwise
         """
         return self.client is not None
+
+    def reinitialize(self):
+        """
+        重新初始化OpenAI客户端（当API key更新后调用）
+        """
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_BASE_URL")
+
+        if not api_key:
+            logger.warning("未设置OPENAI_API_KEY环境变量，将无法使用摘要功能")
+            self.client = None
+        else:
+            if base_url:
+                self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
+                logger.info(f"OpenAI客户端已重新初始化，使用自定义端点: {base_url}")
+            else:
+                self.client = openai.OpenAI(api_key=api_key)
+                logger.info("OpenAI客户端已重新初始化，使用默认端点")

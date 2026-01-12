@@ -126,12 +126,25 @@ async def process_video(
     url: str = Form(...),
     summary_language: str = Form(default="zh"),
     whisper_model: str = Form(default="base"),
-    enable_summary: bool = Form(default=True)
+    enable_summary: bool = Form(default=True),
+    force_reprocess: bool = Form(default=False)
 ):
     """
     处理视频链接，返回任务ID
     """
     try:
+        # If not forced to reprocess, check for existing completed tasks
+        if not force_reprocess:
+            # Check for completed tasks with the same URL
+            for tid, task in tasks.items():
+                if task.get("url") == url and task.get("status") == "completed":
+                    logger.info(f"Found existing completed task for URL: {url}")
+                    return {
+                        "task_id": tid,
+                        "message": "该视频已转录过，返回已有结果...",
+                        "existing": True
+                    }
+
         # 检查是否已经在处理相同的URL
         if url in processing_urls:
             # 查找现有任务
@@ -637,6 +650,10 @@ async def update_settings(
         settings["ytdlp_browser"] = ytdlp_browser
 
     save_settings(settings)
+
+    # Reinitialize Summarizer with new API key
+    summarizer.reinitialize()
+    logger.info("Summarizer reinitialized after settings update")
 
     return {"message": "设置已保存", "success": True}
 
